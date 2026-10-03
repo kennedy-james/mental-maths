@@ -722,6 +722,13 @@ class TestGameInput:
         g._handle_key(127)
         assert g.buf == ""
 
+    @pytest.mark.parametrize("key", [21, 23])
+    def test_ctrl_u_and_ctrl_w_clear_input(self, key):
+        g = _make_game()
+        _type(g, "-1.5")
+        g._handle_key(key)
+        assert g.buf == ""
+
     def test_single_decimal_point(self):
         g = _make_game()
         _type(g, "1.2.3")

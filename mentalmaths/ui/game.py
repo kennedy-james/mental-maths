@@ -23,6 +23,7 @@ from .helpers import (
 )
 
 _BACKSPACE_KEYS = (curses.KEY_BACKSPACE, 127, 8)
+_CLEAR_KEYS = (21, 23)  # Ctrl+U, Ctrl+W
 _QUIT_KEYS = (ESC, *QUIT_KEYS)
 _INCOMPLETE_ANSWERS = ("", "-", ".", "-.")
 _DIGITS = "0123456789"
@@ -118,12 +119,14 @@ class Game:
                 attr = curses.color_pair(RED)
             center(s, h // 2 + 3, fb, attr)
 
-        footer(s, "Type answer and ENTER   BACKSPACE to correct   q to quit")
+        footer(s, "Type answer and ENTER   BACKSPACE to correct   ^U clear   q to quit")
         refresh(s)
 
     def _handle_key(self, key: int) -> None:
         if key in _BACKSPACE_KEYS:
             self.buf = self.buf[:-1]
+        elif key in _CLEAR_KEYS:
+            self.buf = ""
         elif key in ENTER_KEYS:
             self._submit()
         elif key in _QUIT_KEYS:
