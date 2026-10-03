@@ -1013,3 +1013,16 @@ class TestScreens:
     def test_viz_without_sessions(self, screen):
         screen.getch.side_effect = [ord("\t"), 10, 27]
         show_viz(screen, [])
+
+
+class TestRun:
+    def test_exits_with_message_without_tty(self, monkeypatch):
+        import mentalmaths.__main__ as _main_mod
+
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        wrapper = MagicMock()
+        monkeypatch.setattr(_main_mod.curses, "wrapper", wrapper)
+        with pytest.raises(SystemExit) as exc:
+            _main_mod.run()
+        assert "interactive terminal" in str(exc.value.code)
+        wrapper.assert_not_called()
