@@ -1,13 +1,12 @@
+import contextlib
 import curses
 
 from .app import main
 
 
 def run() -> None:
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         curses.wrapper(main)
-    except KeyboardInterrupt:
-        pass  # Ctrl+C exits quietly instead of printing a traceback
 
 
 if __name__ == "__main__":

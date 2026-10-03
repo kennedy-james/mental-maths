@@ -1,64 +1,59 @@
+import operator
 import random
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from .models import OpConfig, Question
+from .models import OpConfig, Question, format_number
+
+_OPERATORS = {
+    "Addition": ("+", operator.add),
+    "Subtraction": ("-", operator.sub),
+    "Multiplication": ("x", operator.mul),
+    "Division": ("/", operator.truediv),
+}
 
 
-def _rnd(lo: int, hi: int, dec: int) -> float:
-    if dec == 0:
-        return float(random.randint(lo, hi))
-    f = 10**dec
-    return round(random.randint(lo * f, (hi + 1) * f - 1) / f, dec)
+def _operand(lo: int, hi: int, dec: int) -> str:
+    scale = 10**dec
+    return format_number(random.randint(lo * scale, (hi + 1) * scale - 1) / scale, dec)
 
 
-def _fmt(x: float, dec: int) -> str:
-    return str(int(round(x))) if dec == 0 else f"{x:.{dec}f}"
+def _round_half_up(x: Decimal, dec: int) -> Decimal:
+    # Round 2.25 to 2.3 as taught in school, not to 2.2 as banker's rounding does.
+    return x.quantize(Decimal(1).scaleb(-dec), rounding=ROUND_HALF_UP)
 
 
 def generate_question(cfg: OpConfig) -> Question:
-    op, d, dec = cfg.operation, cfg.digits, cfg.decimals
-    lo = 10 ** (d - 1) if d > 1 else 1
-    hi = 10**d - 1
-
-    if op == "Addition":
-        a, b = _rnd(lo, hi, dec), _rnd(lo, hi, dec)
-        return Question(
-            f"{_fmt(a, dec)} + {_fmt(b, dec)}", round(a + b, dec), dec, cfg.label
-        )
-
-    if op == "Subtraction":
-        a, b = _rnd(lo, hi, dec), _rnd(lo, hi, dec)
-        if not cfg.allow_negative and b > a:
+    op, dec = cfg.operation, cfg.decimals
+    lo, hi = cfg.operand2_lo, cfg.operand2_hi
+    if op == "Division":
+        divisor = random.randint(lo, hi)
+        if dec == 0:
+            quotient = random.randint(lo, hi)
+            return Question(
+                f"{divisor * quotient} / {divisor}", float(quotient), 0, cfg.label
+            )
+        a, b = _operand(lo, hi, dec), str(divisor)
+    elif op == "Multiplication":
+        a, b = _operand(lo, hi, dec), _operand(lo, hi, dec)
+    else:
+        lo, hi = 10 ** (cfg.digits - 1), 10**cfg.digits - 1
+        a, b = _operand(lo, hi, dec), _operand(lo, hi, dec)
+        if op == "Subtraction" and not cfg.allow_negative and Decimal(b) > Decimal(a):
             a, b = b, a
-        return Question(
-            f"{_fmt(a, dec)} - {_fmt(b, dec)}", round(a - b, dec), dec, cfg.label
-        )
 
-    if op == "Multiplication":
-        a = _rnd(cfg.operand2_lo, cfg.operand2_hi, dec)
-        b = _rnd(cfg.operand2_lo, cfg.operand2_hi, dec)
-        return Question(
-            f"{_fmt(a, dec)} x {_fmt(b, dec)}", round(a * b, dec), dec, cfg.label
-        )
-
-    # Division
-    divisor = random.randint(cfg.operand2_lo, cfg.operand2_hi)
-    if dec == 0:
-        quotient = random.randint(cfg.operand2_lo, cfg.operand2_hi)
-        return Question(
-            f"{divisor * quotient} / {divisor}", float(quotient), 0, cfg.label
-        )
-    a = _rnd(cfg.operand2_lo, cfg.operand2_hi, dec)
-    return Question(
-        f"{_fmt(a, dec)} / {divisor}", round(a / divisor, dec), dec, cfg.label
-    )
+    # Decimal avoids binary float error: 2.3 x 1.5 must be 3.45, not 3.4499...
+    symbol, fn = _OPERATORS[op]
+    answer = _round_half_up(fn(Decimal(a), Decimal(b)), dec)
+    return Question(f"{a} {symbol} {b}", float(answer), dec, cfg.label)
 
 
 def check_answer(user_str: str, q: Question) -> bool:
     try:
-        value = float(user_str)
-    except (ValueError, TypeError):
+        value = Decimal(user_str)
+        # Extra decimal places are rounded like the answer, but a whole-number
+        # answer must be exact so that "41.6" is not accepted for 42.
+        if q.answer_dec == 0:
+            return value == round(q.answer)
+        return _round_half_up(value, q.answer_dec) == Decimal(q.answer_str)
+    except (InvalidOperation, TypeError, ValueError):
         return False
-    if q.answer_dec == 0:
-        # Whole-number answers must match exactly ("42" or "42.0", not "41.6").
-        return value == round(q.answer)
-    return round(value, q.answer_dec) == round(q.answer, q.answer_dec)

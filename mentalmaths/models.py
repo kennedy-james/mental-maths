@@ -1,5 +1,15 @@
 from dataclasses import dataclass
 
+from .constants import OPERAND2_NAMES
+
+
+def format_number(x: float, dec: int) -> str:
+    return str(round(x)) if dec == 0 else f"{x:.{dec}f}"
+
+
+def percent(correct: int, total: int) -> float:
+    return correct / total * 100 if total else 0
+
 
 @dataclass
 class OpConfig:
@@ -8,11 +18,11 @@ class OpConfig:
     decimals: int = 0
     operand2_lo: int = 2
     operand2_hi: int = 12
-    allow_negative: bool = False  # Subtraction only
+    allow_negative: bool = False
 
     @property
     def label(self) -> str:
-        if self.operation in ("Multiplication", "Division"):
+        if self.operation in OPERAND2_NAMES:
             parts = [f"{self.operand2_lo}-{self.operand2_hi}"]
         else:
             parts = [f"{self.digits}-digit"]
@@ -34,6 +44,4 @@ class Question:
 
     @property
     def answer_str(self) -> str:
-        if self.answer_dec == 0:
-            return str(int(round(self.answer)))
-        return f"{self.answer:.{self.answer_dec}f}"
+        return format_number(self.answer, self.answer_dec)

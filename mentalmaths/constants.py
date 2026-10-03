@@ -10,6 +10,12 @@ TIME_OPTIONS = [
     ("10 minutes", 600),
 ]
 
+DIGITS_RANGE = (1, 4)
+DECIMALS_RANGE = (0, 3)
+OPERAND2_MIN = {"Multiplication": 1, "Division": 2}
+OPERAND2_NAMES = {"Multiplication": "Multiplier", "Division": "Divisor"}
+OPERAND2_MAX = 99
+
 
 class QuitGame(Exception):
-    """Raised from any screen to exit the program."""
+    pass
