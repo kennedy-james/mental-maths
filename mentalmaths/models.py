@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -31,7 +30,7 @@ class Question:
     answer_dec: int
     op_label: str = ""
     user_answer: str = ""
-    correct: Optional[bool] = None
+    correct: bool | None = None
 
     @property
     def answer_str(self) -> str:

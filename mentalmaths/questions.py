@@ -55,8 +55,10 @@ def generate_question(cfg: OpConfig) -> Question:
 
 def check_answer(user_str: str, q: Question) -> bool:
     try:
-        if q.answer_dec == 0:
-            return int(round(float(user_str))) == int(round(q.answer))
-        return round(float(user_str), q.answer_dec) == round(q.answer, q.answer_dec)
+        value = float(user_str)
     except (ValueError, TypeError):
         return False
+    if q.answer_dec == 0:
+        # Whole-number answers must match exactly ("42" or "42.0", not "41.6").
+        return value == round(q.answer)
+    return round(value, q.answer_dec) == round(q.answer, q.answer_dec)

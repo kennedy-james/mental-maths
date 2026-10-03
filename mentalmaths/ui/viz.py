@@ -1,8 +1,16 @@
 import curses
-from typing import List
 
 from ..constants import TIME_OPTIONS
-from .helpers import _push, _center, _box
+from .helpers import _ENTER_KEYS, _box, _center, _push
+
+
+def _pct_attr(pct: float) -> int:
+    """Colour for an accuracy percentage: green >=70, yellow >=50, else red."""
+    if pct >= 70:
+        return curses.color_pair(1)
+    if pct >= 50:
+        return curses.color_pair(4)
+    return curses.color_pair(3)
 
 
 def _draw_history_view(
@@ -61,13 +69,7 @@ def _draw_history_view(
         for i, s in enumerate(data):
             pct = s["correct"] / s["total"] * 100 if s["total"] else 0
             bar_h = round(pct / 100 * chart_h)
-            base_clr = (
-                curses.color_pair(1)
-                if pct >= 70
-                else curses.color_pair(4)
-                if pct >= 50
-                else curses.color_pair(3)
-            )
+            base_clr = _pct_attr(pct)
             bold = curses.A_BOLD if i == sel_rel else 0
             for row in range(chart_h):
                 from_bottom = chart_h - 1 - row
@@ -174,7 +176,7 @@ def _show_session_detail(stdscr, session: dict) -> None:
     def _fmt_time(secs: int) -> str:
         return next((lbl for lbl, s in TIME_OPTIONS if s == secs), f"{secs}s")
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f" Session: {session.get('ts', '?')} ")
     lines.append(f" Time:    {_fmt_time(session.get('time_limit', 0))} ")
     total = session.get("total", 0)
@@ -283,13 +285,7 @@ def _draw_perop_view(stdscr, sessions: list, y0: int, x0: int, max_h: int) -> No
             break
         pct = st["correct"] / st["total"] * 100 if st["total"] else 0
         best = max(st["pcts"]) if st["pcts"] else 0
-        color = (
-            curses.color_pair(1)
-            if pct >= 70
-            else curses.color_pair(4)
-            if pct >= 50
-            else curses.color_pair(3)
-        )
+        color = _pct_attr(pct)
         row_data = [
             label[:26],
             str(st["sessions"]),
@@ -386,6 +382,6 @@ def show_viz(stdscr, sessions: list) -> None:
             sel = max(0, sel - 1)
         elif view == 0 and key in (ord("l"), ord("L"), curses.KEY_RIGHT):
             sel = min(len(sessions) - 1, sel + 1)
-        elif view == 0 and key in (ord("\n"), ord("\r"), curses.KEY_ENTER):
+        elif view == 0 and key in _ENTER_KEYS:
             if 0 <= sel < len(sessions):
                 _show_session_detail(stdscr, sessions[sel])

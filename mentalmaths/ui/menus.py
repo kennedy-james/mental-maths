@@ -1,17 +1,20 @@
 import curses
-from typing import List, NamedTuple, Optional, Tuple
+from typing import NamedTuple
 
-from ..constants import QuitGame, TIME_OPTIONS
+from ..constants import TIME_OPTIONS, QuitGame
 from ..models import OpConfig
-from ..voice import _VOICE_AVAILABLE
-from .helpers import _push, _center, _box
+from .helpers import _ENTER_KEYS, _box, _center, _push
 from .viz import show_viz
+
+_UP_KEYS = (curses.KEY_UP, ord("k"))
+_DOWN_KEYS = (curses.KEY_DOWN, ord("j"))
+_QUIT_KEYS = (ord("q"), ord("Q"))
 
 
 # ─── Menu: single select ───────────────────────────────────────────────────────
 
 
-def run_single_select(stdscr, title: str, options: List[str], initial: int = 0) -> int:
+def run_single_select(stdscr, title: str, options: list[str], initial: int = 0) -> int:
     """Returns selected index, -1 on ESC. Raises QuitGame on q."""
     cursor = initial
     stdscr.nodelay(False)
@@ -36,15 +39,15 @@ def run_single_select(stdscr, title: str, options: List[str], initial: int = 0) 
         )
         _push(stdscr)
         key = stdscr.getch()
-        if key in (curses.KEY_UP, ord("k")):
+        if key in _UP_KEYS:
             cursor = (cursor - 1) % len(options)
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key in _DOWN_KEYS:
             cursor = (cursor + 1) % len(options)
-        elif key in (10, 13, curses.KEY_ENTER):
+        elif key in _ENTER_KEYS:
             return cursor
         elif key == 27:
             return -1
-        elif key in (ord("q"), ord("Q")):
+        elif key in _QUIT_KEYS:
             raise QuitGame
 
 
@@ -54,13 +57,13 @@ def run_single_select(stdscr, title: str, options: List[str], initial: int = 0) 
 def run_multiselect(
     stdscr,
     title: str,
-    options: List[str],
-    preselected: Optional[List[int]] = None,
+    options: list[str],
+    sessions: list,
+    preselected: list[int] | None = None,
     guest: bool = False,
-    voice: bool = False,
-) -> Optional[Tuple[List[int], bool, bool]]:
-    """SPACE toggles, ENTER confirms, g toggles guest mode, s toggles voice mode.
-    Returns (sorted indices, guest_mode, voice_mode), None on v (viz). Raises QuitGame on q."""
+) -> tuple[list[int], bool]:
+    """SPACE toggles, ENTER confirms, g toggles guest mode, v shows performance.
+    Returns (sorted indices, guest_mode). Raises QuitGame on q."""
     cursor = 0
     selected: set = set(preselected or [])
     stdscr.nodelay(False)
@@ -72,7 +75,7 @@ def run_multiselect(
         _center(
             stdscr,
             2,
-            "j/k navigate   SPACE toggle   ENTER confirm   g guest   s voice   v performance   q quit",
+            "j/k navigate   SPACE toggle   ENTER confirm   g guest   v performance   q quit",
             curses.A_DIM,
         )
         max_opt = max(len(o) for o in options)
@@ -92,32 +95,22 @@ def run_multiselect(
         guest_label = "[ Guest Mode: ON  ]" if guest else "[ Guest Mode: OFF ]"
         guest_attr = curses.color_pair(4) | curses.A_BOLD if guest else curses.A_DIM
         _center(stdscr, 4 + len(options) + 2, guest_label, guest_attr)
-        if _VOICE_AVAILABLE:
-            voice_label = "[ Voice Mode: ON  ]" if voice else "[ Voice Mode: OFF ]"
-            voice_attr = curses.color_pair(2) | curses.A_BOLD if voice else curses.A_DIM
-        else:
-            voice_label = "[ Voice Mode: N/A ]"
-            voice_attr = curses.A_DIM
-        _center(stdscr, 4 + len(options) + 3, voice_label, voice_attr)
         _push(stdscr)
         key = stdscr.getch()
-        if key in (curses.KEY_UP, ord("k")):
+        if key in _UP_KEYS:
             cursor = (cursor - 1) % len(options)
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key in _DOWN_KEYS:
             cursor = (cursor + 1) % len(options)
         elif key == ord(" "):
             selected ^= {cursor}
-        elif key in (10, 13, curses.KEY_ENTER):
+        elif key in _ENTER_KEYS:
             if selected:
-                return (sorted(selected), guest, voice)
+                return sorted(selected), guest
         elif key in (ord("g"), ord("G")):
             guest = not guest
-        elif key in (ord("s"), ord("S")):
-            if _VOICE_AVAILABLE:
-                voice = not voice
         elif key in (ord("v"), ord("V")):
-            return None  # caller shows viz then comes back
-        elif key in (ord("q"), ord("Q")):
+            show_viz(stdscr, sessions)
+        elif key in _QUIT_KEYS:
             raise QuitGame
 
 
@@ -134,8 +127,8 @@ class Row(NamedTuple):
 
 def _build_rows(
     op: str, digits: int, decimals: int, op2_lo: int, op2_hi: int, allow_neg: int = 0
-) -> List[Row]:
-    rows: List[Row] = []
+) -> list[Row]:
+    rows: list[Row] = []
     if op in ("Addition", "Subtraction"):
         rows.append(Row("Integer digits", digits, 1, 4, "digits"))
     if op == "Multiplication":
@@ -154,32 +147,33 @@ def _build_rows(
     return rows
 
 
-def run_op_config(stdscr, cfg: OpConfig) -> Optional[OpConfig]:
+def run_op_config(stdscr, cfg: OpConfig) -> OpConfig | None:
     """Returns configured OpConfig, None on ESC. Raises QuitGame on q."""
-    op, digits, decimals, op2_lo, op2_hi, allow_neg = (
-        cfg.operation,
-        cfg.digits,
-        cfg.decimals,
-        cfg.operand2_lo,
-        cfg.operand2_hi,
-        int(cfg.allow_negative),
-    )
+    op = cfg.operation
+    values = {
+        "digits": cfg.digits,
+        "decimals": cfg.decimals,
+        "op2_lo": cfg.operand2_lo,
+        "op2_hi": cfg.operand2_hi,
+        "allow_neg": int(cfg.allow_negative),
+    }
     field_idx = 0
     stdscr.nodelay(False)
     while True:
-        rows = _build_rows(op, digits, decimals, op2_lo, op2_hi, allow_neg)
+        rows = _build_rows(op, **values)
         n = len(rows)
         stdscr.erase()
         h, w = stdscr.getmaxyx()
         _box(stdscr)
         _center(stdscr, 2, f"Configure: {op}", curses.A_BOLD | curses.color_pair(2))
-        max_label = max(len(r[0]) for r in rows)
-        for i, (label, val, mn, mx, _key) in enumerate(rows):
+        max_label = max(len(r.label) for r in rows)
+        for i, (label, val, mn, mx, row_key) in enumerate(rows):
             left = "<" if val > mn else " "
             right = ">" if val < mx else " "
-            val_str = (
-                ("No" if val == 0 else "Yes") if _key == "allow_neg" else f"{val:>2}"
-            )
+            if row_key == "allow_neg":
+                val_str = "No" if val == 0 else "Yes"
+            else:
+                val_str = f"{val:>2}"
             line = f"  {label:<{max_label}}   {left} {val_str} {right}  "
             _center(
                 stdscr,
@@ -195,28 +189,26 @@ def run_op_config(stdscr, cfg: OpConfig) -> Optional[OpConfig]:
         )
         _push(stdscr)
         key = stdscr.getch()
-        if key in (curses.KEY_UP, ord("k")):
+        if key in _UP_KEYS:
             field_idx = (field_idx - 1) % n
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key in _DOWN_KEYS:
             field_idx = (field_idx + 1) % n
         elif key in (curses.KEY_LEFT, ord("h"), curses.KEY_RIGHT, ord("l")):
             delta = -1 if key in (curses.KEY_LEFT, ord("h")) else 1
-            _key = rows[field_idx].key
-            if _key == "digits":
-                digits = max(1, min(4, digits + delta))
-            elif _key == "allow_neg":
-                allow_neg = max(0, min(1, allow_neg + delta))
-            elif _key == "op2_lo":
-                op2_lo = max(rows[field_idx].min_val, min(op2_hi, op2_lo + delta))
-            elif _key == "op2_hi":
-                op2_hi = max(op2_lo, min(99, op2_hi + delta))
-            elif _key == "decimals":
-                decimals = max(0, min(3, decimals + delta))
-        elif key in (10, 13, curses.KEY_ENTER):
-            return OpConfig(op, digits, decimals, op2_lo, op2_hi, bool(allow_neg))
+            row = rows[field_idx]
+            values[row.key] = max(row.min_val, min(row.max_val, row.value + delta))
+        elif key in _ENTER_KEYS:
+            return OpConfig(
+                op,
+                values["digits"],
+                values["decimals"],
+                values["op2_lo"],
+                values["op2_hi"],
+                bool(values["allow_neg"]),
+            )
         elif key == 27:
             return None
-        elif key in (ord("q"), ord("Q")):
+        elif key in _QUIT_KEYS:
             raise QuitGame
 
 
@@ -254,13 +246,13 @@ def show_quick_start(stdscr, configs: list, t_idx: int, sessions: list) -> str:
         )
         _push(stdscr)
         key = stdscr.getch()
-        if key in (curses.KEY_UP, ord("k")):
+        if key in _UP_KEYS:
             cursor = (cursor - 1) % len(options)
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key in _DOWN_KEYS:
             cursor = (cursor + 1) % len(options)
-        elif key in (10, 13, curses.KEY_ENTER):
+        elif key in _ENTER_KEYS:
             return "quick" if cursor == 0 else "new"
         elif key in (ord("v"), ord("V")):
             show_viz(stdscr, sessions)
-        elif key in (ord("q"), ord("Q")):
+        elif key in _QUIT_KEYS:
             raise QuitGame

@@ -1,9 +1,8 @@
 import curses
 import math
-from typing import List
 
 from ..models import Question
-from .helpers import _push, _center, _box
+from .helpers import _ENTER_KEYS, _box, _center, _push
 from .viz import show_viz
 
 
@@ -16,7 +15,7 @@ def _q_line(q: Question) -> str:
 
 def show_results(
     stdscr,
-    questions: List[Question],
+    questions: list[Question],
     sessions: list,
     guest_mode: bool = False,
     save_error: bool = False,
@@ -93,7 +92,7 @@ def show_results(
         key = stdscr.getch()
         if key in (ord("q"), ord("Q"), 27):
             return "quit"
-        elif key in (10, 13, curses.KEY_ENTER, ord("r"), ord("R")):
+        elif key in (*_ENTER_KEYS, ord("r"), ord("R")):
             return "again"
         elif key in (ord("m"), ord("M")):
             return "menu"

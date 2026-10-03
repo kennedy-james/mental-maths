@@ -1,5 +1,7 @@
 import curses
 
+_ENTER_KEYS = (10, 13, curses.KEY_ENTER)
+
 
 def _push(stdscr) -> None:
     stdscr.noutrefresh()

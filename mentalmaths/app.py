@@ -1,32 +1,83 @@
 """Mental Maths Trainer — terminal arithmetic practice with countdown timer."""
 
 import curses
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
 
-from .constants import QuitGame, OPERATIONS, TIME_OPTIONS
+from .constants import OPERATIONS, TIME_OPTIONS, QuitGame
 from .models import OpConfig
-from .storage import _dict_to_cfg, _cfg_to_dict, _load_data, _save_data, _make_session
+from .storage import _cfg_to_dict, _dict_to_cfg, _load_data, _make_session, _save_data
+from .ui.game import Game
 from .ui.menus import (
     run_multiselect,
     run_op_config,
     run_single_select,
     show_quick_start,
 )
-from .ui.game import Game
 from .ui.results import show_results
-from .ui.viz import show_viz
 
 
 @dataclass
 class _SessionState:
     """Carries the configuration chosen in the most recent menu pass."""
 
-    indices: Optional[List[int]] = None
-    configs: Optional[List[OpConfig]] = None
+    indices: list[int] = field(default_factory=list)
+    configs: list[OpConfig] = field(default_factory=list)
     t_idx: int = 0
     guest_mode: bool = False
-    voice_mode: bool = False
+
+
+def _parse_last_config(last_config) -> _SessionState | None:
+    """Rebuild the previous session's settings, or None if missing or corrupt."""
+    try:
+        configs = [_dict_to_cfg(c) for c in last_config["configs"]]
+        indices = sorted({OPERATIONS.index(c.operation) for c in configs})
+        t_idx = int(last_config.get("t_idx", 0))
+        guest_mode = bool(last_config.get("guest_mode", False))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if not configs:
+        return None
+    return _SessionState(
+        indices=indices,
+        configs=configs,
+        t_idx=max(0, min(t_idx, len(TIME_OPTIONS) - 1)),
+        guest_mode=guest_mode,
+    )
+
+
+def _run_menus(stdscr, state: _SessionState, sessions: list) -> _SessionState | None:
+    """Walk through operation, per-operation and time selection.
+
+    Returns the new state, or None if the user backed out part-way.
+    """
+    indices, guest_mode = run_multiselect(
+        stdscr,
+        "MENTAL MATHS TRAINER — Select Operations",
+        OPERATIONS,
+        sessions,
+        preselected=state.indices,
+        guest=state.guest_mode,
+    )
+
+    prev = {c.operation: c for c in state.configs}
+    configs: list[OpConfig] = []
+    for idx in indices:
+        op = OPERATIONS[idx]
+        cfg = run_op_config(stdscr, prev.get(op, OpConfig(op)))
+        if cfg is None:
+            return None
+        configs.append(cfg)
+
+    t_idx = run_single_select(
+        stdscr,
+        "Select Time Limit",
+        [label for label, _ in TIME_OPTIONS] + ["Back"],
+        initial=state.t_idx,
+    )
+    if t_idx < 0 or t_idx == len(TIME_OPTIONS):
+        return None
+
+    return _SessionState(indices, configs, t_idx, guest_mode)
 
 
 def main(stdscr) -> None:
@@ -40,102 +91,41 @@ def main(stdscr) -> None:
     stdscr.keypad(True)
 
     data = _load_data()
+    sessions = data.setdefault("sessions", [])
     state = _SessionState()
     skip_menu = False
-    first_run = True  # show quick-start once on startup
 
     try:
+        # Offer a quick start once on startup if a previous config exists.
+        saved = _parse_last_config(data.get("last_config"))
+        if saved is not None:
+            choice = show_quick_start(stdscr, saved.configs, saved.t_idx, sessions)
+            if choice == "quick":
+                state = saved
+                skip_menu = True
+
         while True:
             if not skip_menu:
-                # Quick-start prompt on first entry if previous config exists
-                if first_run:
-                    first_run = False
-                    if data.get("last_config"):
-                        lc = data["last_config"]
-                        try:
-                            saved_configs = [_dict_to_cfg(c) for c in lc["configs"]]
-                            saved_t_idx = min(lc.get("t_idx", 0), len(TIME_OPTIONS) - 1)
-                            choice = show_quick_start(
-                                stdscr,
-                                saved_configs,
-                                saved_t_idx,
-                                data.get("sessions", []),
-                            )
-                            if choice == "quick":
-                                state.configs = saved_configs
-                                state.t_idx = saved_t_idx
-                                state.guest_mode = lc.get("guest_mode", False)
-                                state.voice_mode = lc.get("voice_mode", False)
-                                skip_menu = True
-                                continue
-                        except Exception:
-                            pass  # corrupt save — fall through to normal menu
-
-                # Normal menu flow
-                result = run_multiselect(
-                    stdscr,
-                    "MENTAL MATHS TRAINER — Select Operations",
-                    OPERATIONS,
-                    preselected=state.indices,
-                    guest=state.guest_mode,
-                    voice=state.voice_mode,
-                )
-                if result is None:  # v pressed
-                    show_viz(stdscr, data.get("sessions", []))
+                new_state = _run_menus(stdscr, state, sessions)
+                if new_state is None:
                     continue
-                indices, guest_mode, voice_mode = result
+                state = new_state
 
-                prev = {c.operation: c for c in (state.configs or [])}
-                configs: List[OpConfig] = []
-                cancelled = False
-                for idx in indices:
-                    cfg = run_op_config(
-                        stdscr, prev.get(OPERATIONS[idx], OpConfig(OPERATIONS[idx]))
-                    )
-                    if cfg is None:
-                        cancelled = True
-                        break
-                    configs.append(cfg)
-                if cancelled:
-                    continue
-
-                t_idx = run_single_select(
-                    stdscr,
-                    "Select Time Limit",
-                    [label for label, _ in TIME_OPTIONS] + ["Back"],
-                    initial=state.t_idx,
-                )
-                if t_idx < 0 or t_idx == len(TIME_OPTIONS):
-                    continue
-
-                state.indices = indices
-                state.configs = configs
-                state.t_idx = t_idx
-                state.guest_mode = guest_mode
-                state.voice_mode = voice_mode
-
-            # Play
+            time_limit = TIME_OPTIONS[state.t_idx][1]
             questions = Game(
-                stdscr,
-                state.configs,
-                TIME_OPTIONS[state.t_idx][1],
-                voice_mode=state.voice_mode,
-                guest_mode=state.guest_mode,
+                stdscr, state.configs, time_limit, guest_mode=state.guest_mode
             ).run()
 
             # Persist (skipped in guest mode)
             save_error = False
             if not state.guest_mode:
-                session = _make_session(
-                    questions, state.configs, TIME_OPTIONS[state.t_idx][1]
-                )
+                session = _make_session(questions, state.configs, time_limit)
                 if session:
-                    data.setdefault("sessions", []).append(session)
+                    sessions.append(session)
                     data["last_config"] = {
                         "t_idx": state.t_idx,
                         "configs": [_cfg_to_dict(c) for c in state.configs],
                         "guest_mode": state.guest_mode,
-                        "voice_mode": state.voice_mode,
                     }
                     try:
                         _save_data(data)
@@ -145,7 +135,7 @@ def main(stdscr) -> None:
             result = show_results(
                 stdscr,
                 questions,
-                data.get("sessions", []),
+                sessions,
                 guest_mode=state.guest_mode,
                 save_error=save_error,
             )

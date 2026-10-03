@@ -1,7 +1,6 @@
 from pathlib import Path
 
 DATA_FILE = Path.home() / ".mental-maths.json"
-VOICE_MODEL_DIR = Path.home() / ".local" / "share" / "mental-maths" / "vosk-model"
 OPERATIONS = ["Addition", "Subtraction", "Multiplication", "Division"]
 TIME_OPTIONS = [
     ("30 seconds", 30),

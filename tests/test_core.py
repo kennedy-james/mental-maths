@@ -2,10 +2,11 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mentalmaths.app import _parse_last_config
 from mentalmaths.constants import TIME_OPTIONS
 from mentalmaths.models import OpConfig, Question
 from mentalmaths.questions import generate_question, check_answer, _rnd, _fmt
@@ -17,6 +18,7 @@ from mentalmaths.storage import (
     _save_data,
     _make_session,
 )
+from mentalmaths.ui.game import Game
 from mentalmaths.ui.results import _q_line
 from mentalmaths.ui.menus import _build_rows
 
@@ -298,6 +300,15 @@ class TestCheckAnswer:
         # A user can type '42.0' in the game; it should be treated as correct for answer 42.
         assert check_answer("42.0", self._q(42.0, 0)) is True
 
+    def test_integer_answer_rejects_non_whole_input(self):
+        # Previously '41.6' was rounded to 42 and marked correct.
+        assert check_answer("41.6", self._q(42.0, 0)) is False
+        assert check_answer("42.4", self._q(42.0, 0)) is False
+
+    def test_integer_answer_rejects_half_rounding(self):
+        # Banker's rounding made '2.5' count as 2 but '3.5' count as 4.
+        assert check_answer("2.5", self._q(2.0, 0)) is False
+
     # ---- Decimal answers ---------------------------------------------------
     def test_correct_1dp(self):
         assert check_answer("3.5", self._q(3.5, 1)) is True
@@ -419,6 +430,27 @@ class TestDataPersistence:
         with patch.object(Path, "write_text", side_effect=OSError("no disk")):
             with pytest.raises(OSError, match="no disk"):
                 _save_data({"x": 1})
+
+    def test_load_returns_empty_on_non_dict_json(self, tmp_path, monkeypatch):
+        f = tmp_path / "data.json"
+        f.write_text("[1, 2, 3]")
+        monkeypatch.setattr(_storage_mod, "DATA_FILE", f)
+        assert _load_data() == {}
+
+    def test_save_failure_keeps_existing_file(self, tmp_path, monkeypatch):
+        f = tmp_path / "data.json"
+        f.write_text(json.dumps({"sessions": ["old"]}))
+        monkeypatch.setattr(_storage_mod, "DATA_FILE", f)
+        with patch.object(_storage_mod.os, "replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                _save_data({"sessions": ["new"]})
+        assert _load_data() == {"sessions": ["old"]}
+
+    def test_save_leaves_no_temp_file(self, tmp_path, monkeypatch):
+        f = tmp_path / "data.json"
+        monkeypatch.setattr(_storage_mod, "DATA_FILE", f)
+        _save_data({"x": 1})
+        assert [p.name for p in tmp_path.iterdir()] == ["data.json"]
 
     def test_load_full_structure(self, tmp_path, monkeypatch):
         f = tmp_path / "data.json"
@@ -607,3 +639,129 @@ class TestQLine:
         line = _q_line(q)
         assert "[+]" in line
         assert "-4" in line
+
+
+# ===========================================================================
+# _parse_last_config
+# ===========================================================================
+
+
+class TestParseLastConfig:
+    def test_valid_config(self):
+        lc = {
+            "t_idx": 2,
+            "configs": [
+                _cfg_to_dict(OpConfig("Division")),
+                _cfg_to_dict(OpConfig("Addition")),
+            ],
+        }
+        state = _parse_last_config(lc)
+        assert state is not None
+        assert [c.operation for c in state.configs] == ["Division", "Addition"]
+        assert state.indices == [0, 3]
+        assert state.t_idx == 2
+        assert state.guest_mode is False
+
+    def test_legacy_voice_mode_key_ignored(self):
+        lc = {"configs": [{"operation": "Addition"}], "voice_mode": True}
+        state = _parse_last_config(lc)
+        assert state is not None
+        assert not hasattr(state, "voice_mode")
+
+    def test_t_idx_clamped(self):
+        cfgs = [{"operation": "Addition"}]
+        assert (
+            _parse_last_config({"configs": cfgs, "t_idx": 99}).t_idx
+            == len(TIME_OPTIONS) - 1
+        )
+        assert _parse_last_config({"configs": cfgs, "t_idx": -3}).t_idx == 0
+
+    @pytest.mark.parametrize(
+        "lc",
+        [
+            None,
+            {},
+            "garbage",
+            {"configs": []},
+            {"configs": "nope"},
+            {"configs": [{"digits": 2}]},
+            {"configs": [{"operation": "Exponentiation"}]},
+            {"configs": [{"operation": "Addition"}], "t_idx": "x"},
+        ],
+    )
+    def test_invalid_returns_none(self, lc):
+        assert _parse_last_config(lc) is None
+
+
+# ===========================================================================
+# Game input handling
+# ===========================================================================
+
+
+def _make_game():
+    stdscr = MagicMock()
+    stdscr.getmaxyx.return_value = (24, 80)
+    return Game(stdscr, [OpConfig("Addition", digits=1, decimals=0)], 60)
+
+
+def _type(game, text):
+    for ch in text:
+        game._handle_key(ord(ch))
+
+
+class TestGameInput:
+    def test_digits_append(self):
+        g = _make_game()
+        _type(g, "42")
+        assert g.buf == "42"
+
+    def test_backspace_removes_last_char(self):
+        g = _make_game()
+        _type(g, "42")
+        g._handle_key(127)
+        assert g.buf == "4"
+
+    def test_backspace_on_empty_is_noop(self):
+        g = _make_game()
+        g._handle_key(127)
+        assert g.buf == ""
+
+    def test_single_decimal_point(self):
+        g = _make_game()
+        _type(g, "1.2.3")
+        assert g.buf == "1.23"
+
+    def test_minus_only_at_start(self):
+        g = _make_game()
+        _type(g, "-4-")
+        assert g.buf == "-4"
+
+    def test_other_keys_ignored(self):
+        g = _make_game()
+        _type(g, "a1 b")
+        g._handle_key(1000)  # e.g. KEY_RESIZE / function keys
+        assert g.buf == "1"
+
+    def test_enter_submits_and_advances(self):
+        g = _make_game()
+        first = g.current
+        _type(g, first.answer_str)
+        g._handle_key(10)
+        assert g.questions == [first]
+        assert first.correct is True
+        assert first.user_answer == first.answer_str
+        assert g.buf == ""
+        assert g.current is not first
+
+    def test_wrong_answer_recorded(self):
+        g = _make_game()
+        _type(g, "999")
+        g._handle_key(13)
+        assert g.questions[0].correct is False
+
+    @pytest.mark.parametrize("text", ["", "-", ".", "-."])
+    def test_incomplete_input_not_submitted(self, text):
+        g = _make_game()
+        _type(g, text)
+        g._handle_key(10)
+        assert g.questions == []

@@ -4,7 +4,10 @@ from .app import main
 
 
 def run() -> None:
-    curses.wrapper(main)
+    try:
+        curses.wrapper(main)
+    except KeyboardInterrupt:
+        pass  # Ctrl+C exits quietly instead of printing a traceback
 
 
 if __name__ == "__main__":

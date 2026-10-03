@@ -1,9 +1,9 @@
 import json
+import os
 from datetime import datetime
-from typing import Optional
 
 from .constants import DATA_FILE
-from .models import OpConfig
+from .models import OpConfig, Question
 
 
 def _cfg_to_dict(cfg: OpConfig) -> dict:
@@ -30,16 +30,23 @@ def _dict_to_cfg(d: dict) -> OpConfig:
 
 def _load_data() -> dict:
     try:
-        return json.loads(DATA_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+        data = json.loads(DATA_FILE.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _save_data(data: dict) -> None:
-    DATA_FILE.write_text(json.dumps(data, indent=2))
+    # Write to a temporary file then rename, so an interrupted write can never
+    # leave a truncated data file behind (which would lose all history).
+    tmp = DATA_FILE.with_name(DATA_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, DATA_FILE)
 
 
-def _make_session(questions: list, configs: list, time_limit: int) -> Optional[dict]:
+def _make_session(
+    questions: list[Question], configs: list[OpConfig], time_limit: int
+) -> dict | None:
     if not questions:
         return None
     per_op: dict = {}
