@@ -8,9 +8,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install portaudio (required by pyaudio)
-        run: sudo apt-get install -y portaudio19-dev
-
       - uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies

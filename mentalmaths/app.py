@@ -1,151 +1,136 @@
-"""Mental Maths Trainer — terminal arithmetic practice with countdown timer."""
+from dataclasses import asdict, dataclass, field
 
-import curses
-from dataclasses import dataclass
-from typing import List, Optional
-
-from .constants import QuitGame, OPERATIONS, TIME_OPTIONS
+from .constants import OPERATIONS, TIME_OPTIONS, QuitGame
 from .models import OpConfig
-from .storage import _dict_to_cfg, _cfg_to_dict, _load_data, _save_data, _make_session
+from .storage import (
+    cfg_from_dict,
+    cfg_is_valid,
+    load_data,
+    load_sessions,
+    make_session,
+    save_data,
+)
+from .ui.game import Game
+from .ui.helpers import hide_cursor, init_colours
 from .ui.menus import (
     run_multiselect,
     run_op_config,
     run_single_select,
     show_quick_start,
 )
-from .ui.game import Game
 from .ui.results import show_results
-from .ui.viz import show_viz
 
 
 @dataclass
 class _SessionState:
-    """Carries the configuration chosen in the most recent menu pass."""
-
-    indices: Optional[List[int]] = None
-    configs: Optional[List[OpConfig]] = None
+    indices: list[int] = field(default_factory=list)
+    configs: list[OpConfig] = field(default_factory=list)
     t_idx: int = 0
     guest_mode: bool = False
-    voice_mode: bool = False
+
+
+def _parse_last_config(last_config) -> _SessionState | None:
+    try:
+        configs = [cfg_from_dict(c) for c in last_config["configs"]]
+        t_idx = int(last_config.get("t_idx", 0))
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        return None
+    # Validate before de-duplicating: an invalid operation may be unhashable.
+    if not configs or not all(cfg_is_valid(c) for c in configs):
+        return None
+    operations = [c.operation for c in configs]
+    if len(set(operations)) != len(operations):
+        return None
+    return _SessionState(
+        indices=sorted(OPERATIONS.index(op) for op in operations),
+        configs=configs,
+        t_idx=max(0, min(t_idx, len(TIME_OPTIONS) - 1)),
+    )
+
+
+def _run_menus(
+    stdscr, state: _SessionState, sessions: list
+) -> tuple[_SessionState, bool]:
+    indices, guest_mode = run_multiselect(
+        stdscr,
+        "MENTAL MATHS TRAINER — Select Operations",
+        OPERATIONS,
+        sessions,
+        preselected=state.indices,
+        guest=state.guest_mode,
+    )
+
+    chosen = {c.operation: c for c in state.configs}
+
+    def partial() -> _SessionState:
+        return _SessionState(indices, list(chosen.values()), state.t_idx, guest_mode)
+
+    for idx in indices:
+        op = OPERATIONS[idx]
+        cfg = run_op_config(stdscr, chosen.get(op, OpConfig(op)))
+        if cfg is None:
+            return partial(), False
+        chosen[op] = cfg
+
+    t_idx = run_single_select(
+        stdscr,
+        "Select Time Limit",
+        [label for label, _ in TIME_OPTIONS] + ["Back"],
+        initial=state.t_idx,
+    )
+    if t_idx < 0 or t_idx == len(TIME_OPTIONS):
+        return partial(), False
+
+    configs = [chosen[OPERATIONS[i]] for i in indices]
+    return _SessionState(indices, configs, t_idx, guest_mode), True
 
 
 def main(stdscr) -> None:
-    curses.start_color()
-    curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)
-    curses.init_pair(2, curses.COLOR_CYAN, -1)
-    curses.init_pair(3, curses.COLOR_RED, -1)
-    curses.init_pair(4, curses.COLOR_YELLOW, -1)
-    curses.curs_set(0)
-    stdscr.keypad(True)
+    init_colours()
+    hide_cursor()
 
-    data = _load_data()
+    data = load_data()
+    sessions = load_sessions(data)
     state = _SessionState()
     skip_menu = False
-    first_run = True  # show quick-start once on startup
 
     try:
+        saved = _parse_last_config(data.get("last_config"))
+        if saved is not None:
+            choice = show_quick_start(stdscr, saved.configs, saved.t_idx, sessions)
+            if choice == "quick":
+                state = saved
+                skip_menu = True
+
         while True:
             if not skip_menu:
-                # Quick-start prompt on first entry if previous config exists
-                if first_run:
-                    first_run = False
-                    if data.get("last_config"):
-                        lc = data["last_config"]
-                        try:
-                            saved_configs = [_dict_to_cfg(c) for c in lc["configs"]]
-                            saved_t_idx = min(lc.get("t_idx", 0), len(TIME_OPTIONS) - 1)
-                            choice = show_quick_start(
-                                stdscr,
-                                saved_configs,
-                                saved_t_idx,
-                                data.get("sessions", []),
-                            )
-                            if choice == "quick":
-                                state.configs = saved_configs
-                                state.t_idx = saved_t_idx
-                                state.guest_mode = lc.get("guest_mode", False)
-                                state.voice_mode = lc.get("voice_mode", False)
-                                skip_menu = True
-                                continue
-                        except Exception:
-                            pass  # corrupt save — fall through to normal menu
-
-                # Normal menu flow
-                result = run_multiselect(
-                    stdscr,
-                    "MENTAL MATHS TRAINER — Select Operations",
-                    OPERATIONS,
-                    preselected=state.indices,
-                    guest=state.guest_mode,
-                    voice=state.voice_mode,
-                )
-                if result is None:  # v pressed
-                    show_viz(stdscr, data.get("sessions", []))
-                    continue
-                indices, guest_mode, voice_mode = result
-
-                prev = {c.operation: c for c in (state.configs or [])}
-                configs: List[OpConfig] = []
-                cancelled = False
-                for idx in indices:
-                    cfg = run_op_config(
-                        stdscr, prev.get(OPERATIONS[idx], OpConfig(OPERATIONS[idx]))
-                    )
-                    if cfg is None:
-                        cancelled = True
-                        break
-                    configs.append(cfg)
-                if cancelled:
+                state, done = _run_menus(stdscr, state, sessions)
+                if not done:
                     continue
 
-                t_idx = run_single_select(
-                    stdscr,
-                    "Select Time Limit",
-                    [label for label, _ in TIME_OPTIONS] + ["Back"],
-                    initial=state.t_idx,
-                )
-                if t_idx < 0 or t_idx == len(TIME_OPTIONS):
-                    continue
-
-                state.indices = indices
-                state.configs = configs
-                state.t_idx = t_idx
-                state.guest_mode = guest_mode
-                state.voice_mode = voice_mode
-
-            # Play
+            time_limit = TIME_OPTIONS[state.t_idx][1]
             questions = Game(
-                stdscr,
-                state.configs,
-                TIME_OPTIONS[state.t_idx][1],
-                voice_mode=state.voice_mode,
-                guest_mode=state.guest_mode,
+                stdscr, state.configs, time_limit, guest_mode=state.guest_mode
             ).run()
 
-            # Persist (skipped in guest mode)
             save_error = False
-            if not state.guest_mode:
-                session = _make_session(
-                    questions, state.configs, TIME_OPTIONS[state.t_idx][1]
-                )
-                if session:
-                    data.setdefault("sessions", []).append(session)
-                    data["last_config"] = {
-                        "t_idx": state.t_idx,
-                        "configs": [_cfg_to_dict(c) for c in state.configs],
-                        "guest_mode": state.guest_mode,
-                        "voice_mode": state.voice_mode,
-                    }
-                    try:
-                        _save_data(data)
-                    except OSError:
-                        save_error = True
+            if not state.guest_mode and (
+                session := make_session(questions, state.configs, time_limit)
+            ):
+                sessions.append(session)
+                data["last_config"] = {
+                    "t_idx": state.t_idx,
+                    "configs": [asdict(c) for c in state.configs],
+                }
+                try:
+                    save_data(data)
+                except OSError:
+                    save_error = True
 
             result = show_results(
                 stdscr,
                 questions,
-                data.get("sessions", []),
+                sessions,
                 guest_mode=state.guest_mode,
                 save_error=save_error,
             )

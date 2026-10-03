@@ -1,12 +1,9 @@
 [project]
 name = "mental-maths"
-version = "0.2.0"
+version = "0.3.0"
 description = "a simple mental maths terminal UI"
 requires-python = ">=3.13"
-dependencies = [
-    "pyaudio>=0.2.14",
-    "vosk>=0.3.45",
-]
+dependencies = []
 
 [project.scripts]
 mental-maths = "mentalmaths.__main__:run"
@@ -25,3 +22,7 @@ packages = ["mentalmaths"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
