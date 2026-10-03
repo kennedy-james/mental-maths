@@ -1,5 +1,3 @@
-[![ruff](https://img.shields.io/badge/style-ruff-purple)](https://github.com/astral-sh/ruff)
-[![python 3.13](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/downloads/release/python-3130/)
 <h1 align="center">Mental Maths</h1>
 
 ![gameplay](images/gameplay.png)
